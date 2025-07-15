@@ -1,6 +1,6 @@
 // Working hours to sync
 var syncHourStart = 6;
-var syncHourEnd = 20;
+var syncHourEnd = 18;
 
 // Days of the week to sync (0 = Sunday, 6 = Saturday)
 var syncDayStart = 1;
@@ -10,16 +10,21 @@ var syncDayEnd = 5;
 var syncDaysPast = 7;
 var syncDaysFuture = 56;
 
+// Offset from start and end
 var eventOffsetMinutes = 30;
+
+// Title for busy events
 var eventTitle = "Busy";
 
-var personalCalendarId = "stnmertens@gmail.com";
-var workCalendarId = "stan.mertens@am-flow.com";
+// Calendar IDs
+var myCalendarId = "";
+var workCalendarId = "";
+
 
 function syncPersonalToWorkCalendar() {
-    var personalCalendar = CalendarApp.getCalendarById(personalCalendarId);
+    var myCalendar = CalendarApp.getCalendarById(myCalendarId);
     var workCalendar = CalendarApp.getCalendarById(workCalendarId);
-    if (!personalCalendar || !workCalendar) {
+    if (!myCalendar || !workCalendar) {
         Logger.log("One of the calendars was not found.");
         return;
     }
@@ -30,62 +35,56 @@ function syncPersonalToWorkCalendar() {
     var future = new Date();
     future.setDate(now.getDate() + syncDaysFuture);
 
-    // Collect intervals
-    var personalEvents = personalCalendar.getEvents(now, future);
-    var intervals = [];
-    for (var i = 0; i < personalEvents.length; i++) {
-        var event = personalEvents[i];
+    // Collect personal events
+    var myEvents = myCalendar.getEvents(now, future);
+    var myRanges = [];
+    for (var i = 0; i < myEvents.length; i++) {
+        var event = myEvents[i];
         var start = new Date(event.getStartTime().getTime() - eventOffsetMinutes * 60 * 1000);
         var end = new Date(event.getEndTime().getTime() + eventOffsetMinutes * 60 * 1000);
-        intervals.push({ start: start, end: end });
+        myRanges.push({ start: start, end: end });
     }
-    if (intervals.length === 0) {
+
+    if (myRanges.length === 0) {
         Logger.log("No personal events found.");
         return;
     }
 
-    var merged = mergeIntervals(intervals);
-    var clipped = clipIntervals(merged);
-    var workEvents = workCalendar.getEvents(now, future, { search: eventTitle });
-    var filtered = filterExisting(clipped, workEvents);
+    var myRangesMerged = mergeRanges(myRanges);
+    var myRangesClipped = clipRanges(myRangesMerged);
+    var busyEvents = workCalendar.getEvents(past, future, { search: eventTitle });
+    var busyEvents, obsoleteEvents = splitEvents(myRangesClipped, busyEvents, now);
+    var busyEvents = filterExisting(myRangesClipped, busyEvents);
 
-    // Create new events
-    for (var i = 0; i < filtered.length; i++) {
-        var range = filtered[i];
-        var newEvent = workCalendar.createEvent(eventTitle, range.start, range.end);
-        newEvent.setVisibility(CalendarApp.Visibility.PRIVATE);
-        newEvent.removeAllReminders();
-        newEvent.setColor(CalendarApp.EventColor.GRAY);
+    // Create and delete events
+    for (var i = 0; i < busyEvents.length; i++) {
+        var range = busyEvents[i];
+        var event = workCalendar.createEvent(eventTitle, range.start, range.end);
+        event.setVisibility(CalendarApp.Visibility.PRIVATE);
+        event.removeAllReminders();
+        event.setColor(CalendarApp.EventColor.GRAY);
     }
-
-    // Delete past events
-    var workEvents = workCalendar.getEvents(past, now, { search: eventTitle });
-    workEvents.forEach(function (e) {
-        if (e.getEndTime() < now) {
-            e.deleteEvent();
-        }
-    });
-
+    obsoleteEvents.forEach(event => event.deleteEvent());
     Logger.log("Synchronisation completed.");
 }
 
-function filterExisting(toCheckList, existingEvents) {
-    return toCheckList.filter(item => {
-        return !existingEvents.some(ev => {
-            const eventStart = ev.getStartTime().getTime();
-            const eventEnd = ev.getEndTime().getTime();
-            const itemStart = item.start.getTime();
-            const itemEnd = item.end.getTime();
+function filterExisting(ranges, existingEvents) {
+    return ranges.filter(range => {
+        return !existingEvents.some(event => {
+            const eventStart = event.getStartTime().getTime();
+            const eventEnd = event.getEndTime().getTime();
+            const itemStart = range.start.getTime();
+            const itemEnd = range.end.getTime();
             return eventStart === itemStart && eventEnd === itemEnd;
         });
     });
 }
 
-function mergeIntervals(intervals) {
+function mergeRanges(ranges) {
     var merged = [];
-    var current = intervals[0];
-    for (var i = 1; i < intervals.length; i++) {
-        var next = intervals[i];
+    var current = ranges[0];
+    for (var i = 1; i < ranges.length; i++) {
+        var next = ranges[i];
         if (next.start <= current.end) {
             if (next.end > current.end) {
                 current.end = next.end;
@@ -99,11 +98,11 @@ function mergeIntervals(intervals) {
     return merged;
 }
 
-function clipIntervals(intervals) {
+function clipRanges(ranges) {
     var results = [];
-    intervals.forEach(function (interval) {
-        var start = interval.start;
-        var end = interval.end;
+    ranges.forEach(function (range) {
+        var start = range.start;
+        var end = range.end;
         var cursor = new Date(start);
         cursor.setHours(0, 0, 0, 0);
         while (cursor <= end) {
@@ -123,4 +122,22 @@ function clipIntervals(intervals) {
         }
     });
     return results;
+}
+
+function splitEvents(ranges, workEvents, now) {
+    var futureEvents = workEvents.filter((event) => event.getStartTime() >= now);
+    var obsoleteEvents = futureEvents.filter(function (event) {
+        if (event.getEndTime() < now) {
+            return true;
+        }
+        return !ranges.some(function (range) {
+            var startMatch = event.getStartTime().getTime() === range.start.getTime();
+            var endMatch = event.getEndTime().getTime() === range.end.getTime();
+            return startMatch && endMatch;
+        });
+    });
+    var currentEvents = futureEvents.filter(function (event) {
+        return !obsoleteEvents.includes(event);
+    });
+    return currentEvents, obsoleteEvents;
 }
