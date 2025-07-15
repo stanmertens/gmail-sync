@@ -1,11 +1,18 @@
+// Working hours to sync
 var syncHourStart = 6;
 var syncHourEnd = 20;
+
+// Days of the week to sync (0 = Sunday, 6 = Saturday)
 var syncDayStart = 1;
 var syncDayEnd = 5;
+
+// How many days in the past and future to sync
 var syncDaysPast = 7;
 var syncDaysFuture = 56;
+
 var eventOffsetMinutes = 30;
 var eventTitle = "Busy";
+
 var personalCalendarId = "stnmertens@gmail.com";
 var workCalendarId = "stan.mertens@am-flow.com";
 
@@ -32,7 +39,6 @@ function syncPersonalToWorkCalendar() {
         var end = new Date(event.getEndTime().getTime() + eventOffsetMinutes * 60 * 1000);
         intervals.push({ start: start, end: end });
     }
-
     if (intervals.length === 0) {
         Logger.log("No personal events found.");
         return;
@@ -60,7 +66,7 @@ function syncPersonalToWorkCalendar() {
         }
     });
 
-    Logger.log("Synchronization completed.");
+    Logger.log("Synchronisation completed.");
 }
 
 function filterExisting(toCheckList, existingEvents) {
